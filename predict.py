@@ -99,7 +99,7 @@ class Predictor(BasePredictor):
         lyrics_file = create_temp_file(lyrics, "lyrics_")
 
         # Setup output directory
-        output_dir = "/src/output"
+        output_dir = f"./output/{time.time()}/"
         os.makedirs(output_dir, exist_ok=True)
 
         # Empty output directory

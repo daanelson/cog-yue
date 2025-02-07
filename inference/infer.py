@@ -1,4 +1,5 @@
 import os
+os.environ['HF_HUB_CACHE'] = '/src/dan/cog-yue/inference/models'
 import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'xcodec_mini_infer'))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'xcodec_mini_infer', 'descriptaudiocodec'))
@@ -15,7 +16,7 @@ import torchaudio
 from torchaudio.transforms import Resample
 import soundfile as sf
 from einops import rearrange
-from transformers import AutoTokenizer, AutoModelForCausalLM, LogitsProcessor, LogitsProcessorList
+from transformers import AutoTokenizer, AutoModelForCausalLM, LogitsProcessor, LogitsProcessorList, QuantoConfig
 from omegaconf import OmegaConf
 from codecmanipulator import CodecManipulator
 from mmtokenizer import _MMSentencePieceTokenizer
@@ -23,10 +24,9 @@ from models.soundstream_hubert_new import SoundStream
 from vocoder import build_codec_model, process_audio
 from post_process_audio import replace_low_freq_with_energy_matched
 
-from torchao.quantization.quant_api import (
-    quantize_,
-    int8_dynamic_activation_int8_weight,
-)
+from optimum.quanto import quantize, qfloat8, freeze
+from vllm import LLM, SamplingParams
+from vllm.inputs.data import TokensPrompt
 
 import time
 
@@ -121,22 +121,7 @@ timer.time("Loading tokenizer...")
 mmtokenizer = _MMSentencePieceTokenizer("./mm_tokenizer_v0.2_hf/tokenizer.model")
 
 timer.time(f"Loading Stage 1 model from {stage1_model}...")
-model = AutoModelForCausalLM.from_pretrained(
-    stage1_model,
-    torch_dtype=torch.bfloat16,
-    attn_implementation="sdpa", # To enable flashattn, you have to install flash-attn
-    cache_dir="./models",
-    # device_map="auto",
-    )
-# to device, if gpu is available
-model.to(device)
-model.eval()
-
-if torch.__version__ >= "2.0.0":
-    timer.time("Compiling model with torch.compile()...")
-    model = torch.compile(model)
-
-quantize_(model, int8_dynamic_activation_int8_weight)
+model = LLM(stage1_model, skip_tokenizer_init=True, dtype='bfloat16')
 
 timer.time("Loading codec tools and models...")
 codectool = CodecManipulator("xcodec", 0, 1)
@@ -153,7 +138,7 @@ class BlockTokenRangeProcessor(LogitsProcessor):
         self.blocked_token_ids = list(range(start_id, end_id))
 
     def __call__(self, input_ids, scores):
-        scores[:, self.blocked_token_ids] = -float("inf")
+        scores[..., self.blocked_token_ids] = -float("inf")
         return scores
 
 def load_audio_mono(filepath, sampling_rate=16000):
@@ -262,33 +247,55 @@ for i, p in enumerate(tqdm(prompt_texts[:run_n_segments], desc="Stage1 inference
         input_ids = input_ids[:, -(max_context):]
     with torch.no_grad():
         print(f"Generating tokens for segment {i}...")
-        output_seq = model.generate(
-            input_ids=input_ids,
-            max_new_tokens=max_new_tokens,
-            min_new_tokens=100,
-            do_sample=True,
-            top_p=top_p,
-            temperature=temperature,
-            repetition_penalty=repetition_penalty,
-            eos_token_id=mmtokenizer.eoa,
-            pad_token_id=mmtokenizer.eoa,
-            logits_processor=LogitsProcessorList([BlockTokenRangeProcessor(0, 32002), BlockTokenRangeProcessor(32016, 32016)]),
-            guidance_scale=guidance_scale,
+        sampling_params = SamplingParams(
+            repetition_penalty=repetition_penalty, 
+            temperature=temperature, 
+            top_p=top_p, 
+            max_tokens=max_new_tokens, 
+            min_tokens=100, 
+            skip_special_tokens=False, 
+            spaces_between_special_tokens=False, 
+            logits_processors=LogitsProcessorList([BlockTokenRangeProcessor(0, 32002), BlockTokenRangeProcessor(32016, 32016)]),
+            stop_token_ids=[mmtokenizer.eoa],
             )
-           
-        if output_seq[0][-1].item() != mmtokenizer.eoa:
-            tensor_eoa = torch.as_tensor([[mmtokenizer.eoa]]).to(model.device)
-            output_seq = torch.cat((output_seq, tensor_eoa), dim=1)
+        prompt = TokensPrompt(prompt_token_ids=input_ids.tolist()[0])
+        model.tokenizer = mmtokenizer
+        st = time.time()
+        output_seq = model.generate(prompt, sampling_params)
+        # output_seq = model.generate(
+        #     input_ids=input_ids,
+        #     max_new_tokens=max_new_tokens,
+        #     min_new_tokens=100,
+        #     do_sample=True,
+        #     top_p=top_p,
+        #     temperature=temperature,
+        #     repetition_penalty=repetition_penalty,
+        #     eos_token_id=mmtokenizer.eoa,
+        #     pad_token_id=mmtokenizer.eoa,
+        #     logits_processor=LogitsProcessorList([BlockTokenRangeProcessor(0, 32002), BlockTokenRangeProcessor(32016, 32016)]),
+        #     guidance_scale=guidance_scale,
+        #     )
+        print(f"generated in {time.time() - st} sec")
+        output_seq = [val for val in output_seq[0].outputs[0].token_ids]
+        import pdb
+        pdb.set_trace()
+        # TODO: batch
+        if output_seq[-1] != mmtokenizer.eoa:
+            # tensor_eoa = torch.as_tensor([[mmtokenizer.eoa]]).to(model.device)
+            # output_seq = torch.cat((output_seq, tensor_eoa), dim=1)
+            output_seq.append(mmtokenizer.eoa)
     if i > 1:
-        raw_output = torch.cat([raw_output, prompt_ids, output_seq[:, input_ids.shape[-1]:]], dim=1)
+        raw_output = raw_output + prompt_ids.tolist()[0] + output_seq[input_ids.shape[-1]:]
+        # raw_output = torch.cat([raw_output, prompt_ids, output_seq[:, input_ids.shape[-1]:]], dim=1)
     else:
-        raw_output = output_seq
+        raw_output = prompt_ids.tolist()[0] + output_seq
 
 timer.time("Stage 1 generation complete")
 
 # save raw output and check sanity
 timer.time("Processing Stage 1 outputs...")
-ids = raw_output[0].cpu().numpy()
+#ids = raw_output[0].cpu().numpy()
+ids = np.array(raw_output)
 soa_idx = np.where(ids == mmtokenizer.soa)[0].tolist()
 eoa_idx = np.where(ids == mmtokenizer.eoa)[0].tolist()
 if len(soa_idx)!=len(eoa_idx):
@@ -321,7 +328,6 @@ stage1_output_set.append(inst_save_path)
 # offload model
 if not args.disable_offload_model:
     timer.time("Offloading Stage 1 model from GPU...")
-    model.cpu()
     del model
     torch.cuda.empty_cache()
 
@@ -332,16 +338,18 @@ model_stage2 = AutoModelForCausalLM.from_pretrained(
     torch_dtype=torch.bfloat16,
     attn_implementation="sdpa",
     cache_dir="./models",
+    # quantization_config=quantization_config
     # device_map="auto",
     )
 model_stage2.to(device)
 model_stage2.eval()
+# quantize(model_stage2, weights=qfloat8, activations=qfloat8)
+
 
 if torch.__version__ >= "2.0.0":
     timer.time("Compiling Stage 2 model...")
     model_stage2 = torch.compile(model_stage2)
 
-quantize_(model_stage2, int8_dynamic_activation_int8_weight)
 
 def stage2_generate(model, prompt, batch_size=16):
     timer.time(f"Stage 2 generation with batch size {batch_size}")
