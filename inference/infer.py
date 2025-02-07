@@ -23,6 +23,11 @@ from models.soundstream_hubert_new import SoundStream
 from vocoder import build_codec_model, process_audio
 from post_process_audio import replace_low_freq_with_energy_matched
 
+from torchao.quantization.quant_api import (
+    quantize_,
+    int8_dynamic_activation_int8_weight,
+)
+
 import time
 
 class Timer:
@@ -130,6 +135,8 @@ model.eval()
 if torch.__version__ >= "2.0.0":
     timer.time("Compiling model with torch.compile()...")
     model = torch.compile(model)
+
+quantize_(model, int8_dynamic_activation_int8_weight)
 
 timer.time("Loading codec tools and models...")
 codectool = CodecManipulator("xcodec", 0, 1)
@@ -333,6 +340,8 @@ model_stage2.eval()
 if torch.__version__ >= "2.0.0":
     timer.time("Compiling Stage 2 model...")
     model_stage2 = torch.compile(model_stage2)
+
+quantize_(model_stage2, int8_dynamic_activation_int8_weight)
 
 def stage2_generate(model, prompt, batch_size=16):
     timer.time(f"Stage 2 generation with batch size {batch_size}")
