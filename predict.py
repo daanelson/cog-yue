@@ -38,9 +38,9 @@ class Predictor(BasePredictor):
         print(f"Cog version: {cog_version}\n")
 
         self.download_weights(
-            "models--m-a-p--YuE-s1-7B-anneal-en-cot", "/src/inference/models"
+            "models--m-a-p--YuE-s1-7B-anneal-en-cot", "./inference/models"
         )
-        self.download_weights("xcodec_mini_infer", "/src/inference")
+        self.download_weights("xcodec_mini_infer", "./inference")
 
     def predict(
         self,
@@ -129,7 +129,7 @@ class Predictor(BasePredictor):
                 "--run_n_segments",
                 str(num_segments),
                 "--stage2_batch_size",
-                "4",
+                "16",
                 "--output_dir",
                 output_dir,
                 "--cuda_idx",
@@ -173,3 +173,7 @@ class Predictor(BasePredictor):
 
         print(f"Using seed: {seed}\n")
         return seed
+
+# generating tokens for segment 1 -> stage 1 generation complete - 45 sec
+# processing frames 0 - 300 - 45 seconds
+# so that's basically where it all is
