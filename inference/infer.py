@@ -108,8 +108,7 @@ def seed_everything(seed=42):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    # torch.backends.cudnn.deterministic = True
-    # torch.backends.cudnn.benchmark = False
+
 seed_everything(args.seed)
 timer.time(f"Set random seed to {args.seed}")
 
@@ -238,13 +237,13 @@ for i, p in enumerate(tqdm(prompt_texts[:run_n_segments], desc="Stage1 inference
     else:
         prompt_ids = end_of_segment + start_of_segment + mmtokenizer.tokenize(section_text) + [mmtokenizer.soa] + codectool.sep_ids
 
-    prompt_ids = torch.as_tensor(prompt_ids).unsqueeze(0).to(device)
-    input_ids = torch.cat([raw_output, prompt_ids], dim=1) if i > 1 else prompt_ids
+    input_ids = raw_output + prompt_ids if i > 1 else prompt_ids
+
     # Use window slicing in case output sequence exceeds the context of model
     max_context = 16384-max_new_tokens-1
-    if input_ids.shape[-1] > max_context:
-        timer.time(f'Section {i}: output length {input_ids.shape[-1]} exceeding context length {max_context}, now using the last {max_context} tokens.')
-        input_ids = input_ids[:, -(max_context):]
+    if len(input_ids) > max_context:
+        timer.time(f'Section {i}: output length {len(input_ids)} exceeds context length {max_context}, now using the last {max_context} tokens.')
+        input_ids = input_ids[-(max_context):]
     with torch.no_grad():
         print(f"Generating tokens for segment {i}...")
         sampling_params = SamplingParams(
@@ -258,37 +257,17 @@ for i, p in enumerate(tqdm(prompt_texts[:run_n_segments], desc="Stage1 inference
             logits_processors=LogitsProcessorList([BlockTokenRangeProcessor(0, 32002), BlockTokenRangeProcessor(32016, 32016)]),
             stop_token_ids=[mmtokenizer.eoa],
             )
-        prompt = TokensPrompt(prompt_token_ids=input_ids.tolist()[0])
-        model.tokenizer = mmtokenizer
-        st = time.time()
+        prompt = TokensPrompt(prompt_token_ids=input_ids)
         output_seq = model.generate(prompt, sampling_params)
-        # output_seq = model.generate(
-        #     input_ids=input_ids,
-        #     max_new_tokens=max_new_tokens,
-        #     min_new_tokens=100,
-        #     do_sample=True,
-        #     top_p=top_p,
-        #     temperature=temperature,
-        #     repetition_penalty=repetition_penalty,
-        #     eos_token_id=mmtokenizer.eoa,
-        #     pad_token_id=mmtokenizer.eoa,
-        #     logits_processor=LogitsProcessorList([BlockTokenRangeProcessor(0, 32002), BlockTokenRangeProcessor(32016, 32016)]),
-        #     guidance_scale=guidance_scale,
-        #     )
-        print(f"generated in {time.time() - st} sec")
+
         output_seq = [val for val in output_seq[0].outputs[0].token_ids]
-        import pdb
-        pdb.set_trace()
-        # TODO: batch
+
         if output_seq[-1] != mmtokenizer.eoa:
-            # tensor_eoa = torch.as_tensor([[mmtokenizer.eoa]]).to(model.device)
-            # output_seq = torch.cat((output_seq, tensor_eoa), dim=1)
             output_seq.append(mmtokenizer.eoa)
     if i > 1:
-        raw_output = raw_output + prompt_ids.tolist()[0] + output_seq[input_ids.shape[-1]:]
-        # raw_output = torch.cat([raw_output, prompt_ids, output_seq[:, input_ids.shape[-1]:]], dim=1)
+        raw_output = raw_output + prompt_ids + output_seq
     else:
-        raw_output = prompt_ids.tolist()[0] + output_seq
+        raw_output = prompt_ids + output_seq
 
 timer.time("Stage 1 generation complete")
 
