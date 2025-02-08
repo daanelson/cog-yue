@@ -1,5 +1,5 @@
 import os
-os.environ['HF_HUB_CACHE'] = '/src/dan/cog-yue/inference/models'
+os.environ['HF_HUB_CACHE'] = '/src/dan/cog-yue/models'
 import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'xcodec_mini_infer'))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'xcodec_mini_infer', 'descriptaudiocodec'))
@@ -316,9 +316,6 @@ model_stage2 = AutoModelForCausalLM.from_pretrained(
     stage2_model,
     torch_dtype=torch.bfloat16,
     attn_implementation="sdpa",
-    cache_dir="./models",
-    # quantization_config=quantization_config
-    # device_map="auto",
     )
 model_stage2.to(device)
 model_stage2.eval()
