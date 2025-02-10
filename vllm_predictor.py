@@ -470,40 +470,75 @@ class VLLMYue:
             ]).astype(np.int32)
             prompt_ids = prompt_ids[np.newaxis, ...]
 
-        codec_ids = torch.as_tensor(codec_ids).to(device)
-        prompt_ids = torch.as_tensor(prompt_ids).to(device)
+        # TODO: this can probably be a normal list instead - codec_ids.asList() - except you have to batch it. 
+        # codec_ids = torch.as_tensor(codec_ids).to(device)
+        # prompt_ids = torch.as_tensor(prompt_ids).to(device)
         len_prompt = prompt_ids.shape[-1]
 
+        # I'm fairly sure you could do the whole forcing thing with a logitsprocessorlist
         block_list = LogitsProcessorList([BlockTokenRangeProcessor(0, 46358), BlockTokenRangeProcessor(53526, mmtokenizer.vocab_size)])
+
+        stage2_sampling_params = SamplingParams(
+            max_tokens=7, 
+            min_tokens=7, 
+            skip_special_tokens=False, 
+            spaces_between_special_tokens=False, 
+            logits_processors=block_list,
+            stop_token_ids=[mmtokenizer.eoa],
+            )
+        
+        if batch_size > 1:
+            prompt_ids = [TokensPrompt(prompt_token_ids=prompt_ids[val, :]) for val in range(prompt_ids.shape[0])]
+        else:
+            prompt_ids = TokensPrompt(prompt_token_ids=prompt_ids)
 
         # Teacher forcing generate loop
         timer.time("Starting teacher forcing generation loop...")
         for frames_idx in range(codec_ids.shape[1]):
             if frames_idx % 100 == 0:
                 timer.time(f"Processing frame {frames_idx}/{codec_ids.shape[1]}")
-            cb0 = codec_ids[:, frames_idx:frames_idx+1]
-            prompt_ids = torch.cat([prompt_ids, cb0], dim=1)
-            input_ids = prompt_ids
+            cb0 = codec_ids[:, frames_idx:frames_idx+1] # all batches, idx -> idx + 1 #
+            # interesting. so this seems to apply that prompt_ids grows by 7 with each iteration here. can I validate that? 
+            if batch_size > 1:
+                for i in range(cb0.shape[0]):
+                    prompt_ids[i]['prompt_token_ids'].append(cb0[i])
+            else:
+                prompt_ids['prompt_token_ids'].append(cb0[0])
+
+            # prompt_ids = torch.cat([prompt_ids, cb0], dim=1)
+            # input_ids = prompt_ids
+
 
             with torch.no_grad():
-                stage2_output = self.stage2_model.generate(input_ids=input_ids,
-                    min_new_tokens=7,
-                    max_new_tokens=7,
-                    eos_token_id=mmtokenizer.eoa,
-                    pad_token_id=mmtokenizer.eoa,
-                    logits_processor=block_list,
-                )
+                stage2_output = self.stage2_model.generate(prompt_ids, stage2_sampling_params)
+                # stage2_output = self.stage2_model.generate(input_ids=input_ids,
+                #     min_new_tokens=7,
+                #     max_new_tokens=7,
+                #     eos_token_id=mmtokenizer.eoa,
+                #     pad_token_id=mmtokenizer.eoa,
+                #     logits_processor=block_list,
+                # )
+            # output_seq = [val for val in output_seq[0].outputs[0].token_ids]
 
-            assert stage2_output.shape[1] - prompt_ids.shape[1] == 7, f"output new tokens={stage2_output.shape[1]-prompt_ids.shape[1]}"
-            prompt_ids = stage2_output
-
+            # TODO: proper assertion
+            #assert stage2_output.shape[1] - prompt_ids.shape[1] == 7, f"output new tokens={stage2_output.shape[1]-prompt_ids.shape[1]}"
+            # prompt_ids = stage2_output
+            outputs = stage2_output[0].outputs
+            if batch_size > 1:
+                for i in range(len(outputs)):
+                    prompt_ids[i]['prompt_token_ids'].append(outputs[i])
+            else:
+                prompt_ids['prompt_token_ids'].append(outputs[0])
+        # TODO: this
         # Return output based on batch size
         if batch_size > 1:
-            output = prompt_ids.cpu().numpy()[:, len_prompt:]
-            output_list = [output[i] for i in range(batch_size)]
-            output = np.concatenate(output_list, axis=0)
+            output = np.concatenate([val['prompt_token_ids'][len_prompt:] for val in prompt_ids])
+            # output = prompt_ids.cpu().numpy()[:, len_prompt:]
+            # output_list = [output[i] for i in range(batch_size)]
+            # output = np.concatenate(output_list, axis=0)
         else:
-            output = prompt_ids[0].cpu().numpy()[len_prompt:]
+            # output = prompt_ids[0].cpu().numpy()[len_prompt:]
+            output = np.array(prompt_ids['prompt_token_ids'][len_prompt:])
 
         return output
 
