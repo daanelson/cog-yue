@@ -1,8 +1,9 @@
 import os
-os.environ['HF_HUB_CACHE'] = '/src/dan/cog-yue/models'
+os.environ['HF_HUB_CACHE'] = './models'
 import sys
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'xcodec_mini_infer'))
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'xcodec_mini_infer', 'descriptaudiocodec'))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inference'))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inference', 'xcodec_mini_infer'))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inference', 'xcodec_mini_infer', 'descriptaudiocodec'))
 import re
 import random
 import uuid
@@ -60,8 +61,8 @@ parser.add_argument("--max_new_tokens", type=int, default=3000, help="The maximu
 parser.add_argument("--run_n_segments", type=int, default=2, help="The number of segments to process during the generation.")
 parser.add_argument("--stage2_batch_size", type=int, default=4, help="The batch size used in Stage 2 inference.")
 # Prompt
-parser.add_argument("--genre_txt", type=str, required=True, help="The file path to a text file containing genre tags that describe the musical style or characteristics (e.g., instrumental, genre, mood, vocal timbre, vocal gender). This is used as part of the generation prompt.")
-parser.add_argument("--lyrics_txt", type=str, required=True, help="The file path to a text file containing the lyrics for the music generation. These lyrics will be processed and split into structured segments to guide the generation process.")
+# parser.add_argument("--genre_txt", type=str, required=True, help="The file path to a text file containing genre tags that describe the musical style or characteristics (e.g., instrumental, genre, mood, vocal timbre, vocal gender). This is used as part of the generation prompt.")
+# parser.add_argument("--lyrics_txt", type=str, required=True, help="The file path to a text file containing the lyrics for the music generation. These lyrics will be processed and split into structured segments to guide the generation process.")
 parser.add_argument("--use_audio_prompt", action="store_true", help="If set, the model will use an audio file as a prompt during generation. The audio file should be specified using --audio_prompt_path.")
 parser.add_argument("--audio_prompt_path", type=str, default="", help="The file path to an audio file to use as a reference prompt when --use_audio_prompt is enabled.")
 parser.add_argument("--prompt_start_time", type=float, default=0.0, help="The start time in seconds to extract the audio prompt from the given audio file.")
@@ -73,14 +74,14 @@ parser.add_argument("--instrumental_track_prompt_path", type=str, default="", he
 parser.add_argument("--output_dir", type=str, default="./output", help="The directory where generated outputs will be saved.")
 parser.add_argument("--keep_intermediate", action="store_true", help="If set, intermediate outputs will be saved during processing.")
 parser.add_argument("--disable_offload_model", action="store_true", help="If set, the model will not be offloaded from the GPU to CPU after Stage 1 inference.")
-# parser.add_argument("--cuda_idx", type=int, default=0)
+parser.add_argument("--cuda_idx", type=int, default=0)
 parser.add_argument("--seed", type=int, default=42, help="An integer value to reproduce generation.")
 # Config for xcodec and upsampler
 # parser.add_argument('--basic_model_config', default='./xcodec_mini_infer/final_ckpt/config.yaml', help='YAML files for xcodec configurations.')
 parser.add_argument('--resume_path', default='./xcodec_mini_infer/final_ckpt/ckpt_00360000.pth', help='Path to the xcodec checkpoint.')
-parser.add_argument('--config_path', type=str, default='./xcodec_mini_infer/decoders/config.yaml', help='Path to Vocos config file.')
-parser.add_argument('--vocal_decoder_path', type=str, default='./xcodec_mini_infer/decoders/decoder_131000.pth', help='Path to Vocos decoder weights.')
-parser.add_argument('--inst_decoder_path', type=str, default='./xcodec_mini_infer/decoders/decoder_151000.pth', help='Path to Vocos decoder weights.')
+parser.add_argument('--config_path', type=str, default='./inference/xcodec_mini_infer/decoders/config.yaml', help='Path to Vocos config file.')
+parser.add_argument('--vocal_decoder_path', type=str, default='./inference/xcodec_mini_infer/decoders/decoder_131000.pth', help='Path to Vocos decoder weights.')
+parser.add_argument('--inst_decoder_path', type=str, default='./inference/xcodec_mini_infer/decoders/decoder_151000.pth', help='Path to Vocos decoder weights.')
 parser.add_argument('-r', '--rescale', action='store_true', help='Rescale output to avoid clipping.')
 
 torch.set_float32_matmul_precision("high")
@@ -101,6 +102,22 @@ class BlockTokenRangeProcessor(LogitsProcessor):
         scores[..., self.blocked_token_ids] = -float("inf")
         return scores
 
+class EveryEigthTokenRangeProcessor(LogitsProcessor):
+    """
+    don't need to constantly start and stop generation; one processor per batched prompt
+    for this to work you pass in a list of samplingParams instead of one samplingparams
+    """
+    def __init__(self, codec_ids, prompts):
+        self.codec_ids = codec_ids
+        self.counter = 0
+    
+    def __call__(self, prompt, output, scores):
+        if self.counter == 7:
+            # inject token
+            self.counter = 0
+            return scores
+        self.counter += 1
+        return scores
 
 class VLLMYue:
     def __init__(self, device="cuda"):
@@ -111,14 +128,14 @@ class VLLMYue:
         self.timer.time(f"Loading models")
         self.mmtokenizer = _MMSentencePieceTokenizer("./inference/mm_tokenizer_v0.2_hf/tokenizer.model")
 
-        self.stage1_model = LLM(stage1_model, skip_tokenizer_init=True, dtype='bfloat16')
-        self.stage2_model = LLM(stage2_model, skip_tokenizer_init=True, dtype='bfloat16')
+        self.stage1_model = LLM(stage1_model, skip_tokenizer_init=True, dtype='bfloat16', gpu_memory_utilization=.4)
+        self.stage2_model = LLM(stage2_model, skip_tokenizer_init=True, dtype='bfloat16', gpu_memory_utilization=.4)
         
         self.codectool = CodecManipulator("xcodec", 0, 1)
         self.codectool_stage2 = CodecManipulator("xcodec", 0, 8)
 
         codec_config = "./inference/xcodec_mini_infer/final_ckpt/config.yaml"
-        codec_path = './xcodec_mini_infer/final_ckpt/ckpt_00360000.pth'
+        codec_path = './inference/xcodec_mini_infer/final_ckpt/ckpt_00360000.pth'
         model_config = OmegaConf.load(codec_config)
         codec_model = eval(model_config.generator.name)(**model_config.generator.config).to(device)
 
@@ -130,7 +147,7 @@ class VLLMYue:
         self.timer.time(f"models loaded")
 
 
-    def main_generate(self, genre_input: str, lyrics_input: str, max_new_tokens: int, args):
+    def main_generate(self, genre_input: str, lyrics_input: str, max_new_tokens: int, run_n_segments: int, seed: int):
         timer = self.timer
         timer.reset()
         if args.use_audio_prompt and not args.audio_prompt_path:
@@ -155,7 +172,7 @@ class VLLMYue:
             torch.manual_seed(seed)
             torch.cuda.manual_seed_all(seed)
 
-        seed_everything(args.seed)
+        seed_everything(seed)
         timer.time(f"Set random seed to {args.seed}")
 
         mmtokenizer = self.mmtokenizer
@@ -219,7 +236,7 @@ class VLLMYue:
         end_of_segment = mmtokenizer.tokenize('[end_of_segment]')
 
         # Format text prompt
-        run_n_segments = min(args.run_n_segments+1, len(lyrics))
+        run_n_segments = min(args.run_n_segments+1, len(lyrics)+1)
         timer.time(f"Will process {run_n_segments-1} segments")
 
         raw_output = None
@@ -429,7 +446,6 @@ class VLLMYue:
 
 
     def stage2_generate(self, prompt, batch_size=16):
-        # lazy time
         timer = self.timer
         codectool = self.codectool
         mmtokenizer = self.mmtokenizer
@@ -488,9 +504,9 @@ class VLLMYue:
             )
         
         if batch_size > 1:
-            prompt_ids = [TokensPrompt(prompt_token_ids=prompt_ids[val, :]) for val in range(prompt_ids.shape[0])]
+            prompt_ids = [TokensPrompt(prompt_token_ids=prompt_ids[val, :].tolist()) for val in range(prompt_ids.shape[0])]
         else:
-            prompt_ids = TokensPrompt(prompt_token_ids=prompt_ids)
+            prompt_ids = TokensPrompt(prompt_token_ids=prompt_ids.tolist()[0])
 
         # Teacher forcing generate loop
         timer.time("Starting teacher forcing generation loop...")
@@ -501,9 +517,9 @@ class VLLMYue:
             # interesting. so this seems to apply that prompt_ids grows by 7 with each iteration here. can I validate that? 
             if batch_size > 1:
                 for i in range(cb0.shape[0]):
-                    prompt_ids[i]['prompt_token_ids'].append(cb0[i])
+                    prompt_ids[i]['prompt_token_ids'].append(cb0[i][0])
             else:
-                prompt_ids['prompt_token_ids'].append(cb0[0])
+                prompt_ids['prompt_token_ids'].append(cb0[0][0])
 
             # prompt_ids = torch.cat([prompt_ids, cb0], dim=1)
             # input_ids = prompt_ids
@@ -523,14 +539,14 @@ class VLLMYue:
             # TODO: proper assertion
             #assert stage2_output.shape[1] - prompt_ids.shape[1] == 7, f"output new tokens={stage2_output.shape[1]-prompt_ids.shape[1]}"
             # prompt_ids = stage2_output
-            outputs = stage2_output[0].outputs
             if batch_size > 1:
-                for i in range(len(outputs)):
-                    prompt_ids[i]['prompt_token_ids'].append(outputs[i])
+                for i, output in enumerate(stage2_output):
+                    prompt_ids[i]['prompt_token_ids'].extend([val for val in output.outputs[0].token_ids])
             else:
-                prompt_ids['prompt_token_ids'].append(outputs[0])
+                prompt_ids['prompt_token_ids'].extend([val for val in stage2_output[0].outputs[0].token_ids])
         # TODO: this
         # Return output based on batch size
+
         if batch_size > 1:
             output = np.concatenate([val['prompt_token_ids'][len_prompt:] for val in prompt_ids])
             # output = prompt_ids.cpu().numpy()[:, len_prompt:]
