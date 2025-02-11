@@ -107,19 +107,23 @@ class EveryEighthTokenProcessor(LogitsProcessor):
     don't need to constantly start and stop generation; one processor per batched prompt
     for this to work you pass in a list of samplingParams instead of one samplingparams
     """
-    def __init__(self, codec_ids, prompts):
+    def __init__(self, codec_ids):
         self.codec_ids = codec_ids
         self.counter = 0
         self.codec_indexer = 0
     
     def __call__(self, prompt, output, scores):
+        # import pdb
+        # pdb.set_trace()
         if self.counter % 8 == 0:
+            if self.codec_indexer >= len(self.codec_ids):
+                print("bigger than codec")
+                return scores
             # inject token. We do this on the 0th token as well
-            scores = [-float("inf") for val in scores]
+            scores = torch.full_like(scores, float("-inf")) #[-float("inf") for val in scores]
             next_id = self.codec_ids[self.codec_indexer]
             scores[next_id] = 10.0 # great number, 10
             self.codec_indexer += 1
-            return scores
 
         self.counter += 1
         return scores
