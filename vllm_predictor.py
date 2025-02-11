@@ -115,7 +115,7 @@ class EveryEighthTokenProcessor(LogitsProcessor):
     def __call__(self, prompt, output, scores):
         if self.counter % 8 == 0:
             # inject token. We do this on the 0th token as well
-            scores = [-float(inf) for val in scores]
+            scores = [-float("inf") for val in scores]
             next_id = self.codec_ids[self.codec_indexer]
             scores[next_id] = 10.0 # great number, 10
             self.codec_indexer += 1
@@ -567,8 +567,6 @@ class VLLMYue:
         # else:
         #     # output = prompt_ids[0].cpu().numpy()[len_prompt:]
         #     output = np.array(prompt_ids['prompt_token_ids'][len_prompt:])
-
-        return output
 
     def stage2_inference(self, stage1_output_set, stage2_output_dir, batch_size=4):
         timer = self.timer
