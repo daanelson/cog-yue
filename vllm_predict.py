@@ -1,8 +1,8 @@
 import importlib
 import os
 
-from vllm_predictor import VLLMYue
-os.environ['HF_HUB_CACHE'] = './models'
+from inference.vllm_yue_engine import VLLMYue
+os.environ['HF_HUB_CACHE'] = './inference/models'
 import tempfile
 import subprocess
 import shutil
@@ -63,11 +63,11 @@ class Predictor(BasePredictor):
         print(f"Cog version: {cog_version}\n")
 
         self.download_weights(
-            "models--m-a-p--YuE-s1-7B-anneal-en-cot", "./models"
+            "models--m-a-p--YuE-s1-7B-anneal-en-cot", "./inference/models"
         )
         self.download_weights("xcodec_mini_infer", "./inference")
         self.download_weights(
-            "models--m-a-p--YuE-s2-1B-general", "./models"
+            "models--m-a-p--YuE-s2-1B-general", "./inference/models"
         )
         timer.time(f"Loading models")
         self.model = VLLMYue()
@@ -98,7 +98,6 @@ class Predictor(BasePredictor):
         ),
     ) -> List[Path]:
         """Run YuE inference on the provided inputs"""
-
 
         seed = self.seed_or_random_seed(seed)
 

@@ -1,9 +1,8 @@
 import os
-os.environ['HF_HUB_CACHE'] = './models'
+#os.environ['HF_HUB_CACHE'] = './models'
 import sys
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inference'))
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inference', 'xcodec_mini_infer'))
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'inference', 'xcodec_mini_infer', 'descriptaudiocodec'))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'xcodec_mini_infer'))
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'xcodec_mini_infer', 'descriptaudiocodec'))
 import re
 import random
 import uuid
@@ -17,7 +16,7 @@ import torchaudio
 from torchaudio.transforms import Resample
 import soundfile as sf
 from einops import rearrange
-from transformers import AutoTokenizer, AutoModelForCausalLM, LogitsProcessor, LogitsProcessorList, QuantoConfig
+from transformers import LogitsProcessor, LogitsProcessorList
 from omegaconf import OmegaConf
 from codecmanipulator import CodecManipulator
 from mmtokenizer import _MMSentencePieceTokenizer
@@ -25,7 +24,6 @@ from models.soundstream_hubert_new import SoundStream
 from vocoder import build_codec_model, process_audio
 from post_process_audio import replace_low_freq_with_energy_matched
 
-from optimum.quanto import quantize, qfloat8, freeze
 from vllm import LLM, SamplingParams
 from vllm.inputs.data import TokensPrompt
 
@@ -105,7 +103,7 @@ class BlockTokenRangeProcessor(LogitsProcessor):
 class EveryEighthTokenProcessor(LogitsProcessor):
     """
     don't need to constantly start and stop generation; one processor per batched prompt
-    for this to work you pass in a list of samplingParams instead of one samplingparams
+    for this to work you pass in a list of samplingParams to llm.generate() instead of one samplingparams so that each sampler can have its own params
     """
     def __init__(self, codec_ids):
         self.codec_ids = codec_ids
@@ -135,7 +133,7 @@ class VLLMYue:
         stage2_model = "m-a-p/YuE-s2-1B-general"
 
         self.timer.time(f"Loading models")
-        self.mmtokenizer = _MMSentencePieceTokenizer("./inference/mm_tokenizer_v0.2_hf/tokenizer.model")
+        self.mmtokenizer = _MMSentencePieceTokenizer("./mm_tokenizer_v0.2_hf/tokenizer.model")
 
         self.stage1_model = LLM(stage1_model, skip_tokenizer_init=True, dtype='bfloat16', gpu_memory_utilization=.4)
         self.stage2_model = LLM(stage2_model, skip_tokenizer_init=True, dtype='bfloat16', gpu_memory_utilization=.4)
@@ -143,8 +141,8 @@ class VLLMYue:
         self.codectool = CodecManipulator("xcodec", 0, 1)
         self.codectool_stage2 = CodecManipulator("xcodec", 0, 8)
 
-        codec_config = "./inference/xcodec_mini_infer/final_ckpt/config.yaml"
-        codec_path = './inference/xcodec_mini_infer/final_ckpt/ckpt_00360000.pth'
+        codec_config = "./xcodec_mini_infer/final_ckpt/config.yaml"
+        codec_path = './xcodec_mini_infer/final_ckpt/ckpt_00360000.pth'
         model_config = OmegaConf.load(codec_config)
         codec_model = eval(model_config.generator.name)(**model_config.generator.config).to(device)
 
@@ -523,54 +521,6 @@ class VLLMYue:
         stage2_output = self.stage2_model.generate(prompt_ids, sampling_params)
 
         return np.concatenate([val.outputs[0].token_ids for val in stage2_output])
-
-
-
-        # for frames_idx in range(codec_ids.shape[1]):
-        #     if frames_idx % 100 == 0:
-        #         timer.time(f"Processing frame {frames_idx}/{codec_ids.shape[1]}")
-        #     cb0 = codec_ids[:, frames_idx:frames_idx+1] # all batches, idx -> idx + 1 #
-        #     # interesting. so this seems to apply that prompt_ids grows by 7 with each iteration here. can I validate that? 
-        #     if batch_size > 1:
-        #         for i in range(cb0.shape[0]):
-        #             prompt_ids[i]['prompt_token_ids'].append(cb0[i][0])
-        #     else:
-        #         prompt_ids['prompt_token_ids'].append(cb0[0][0])
-
-        #     # prompt_ids = torch.cat([prompt_ids, cb0], dim=1)
-        #     # input_ids = prompt_ids
-
-
-        #     with torch.no_grad():
-        #         stage2_output = self.stage2_model.generate(prompt_ids, stage2_sampling_params)
-        #         # stage2_output = self.stage2_model.generate(input_ids=input_ids,
-        #         #     min_new_tokens=7,
-        #         #     max_new_tokens=7,
-        #         #     eos_token_id=mmtokenizer.eoa,
-        #         #     pad_token_id=mmtokenizer.eoa,
-        #         #     logits_processor=block_list,
-        #         # )
-        #     # output_seq = [val for val in output_seq[0].outputs[0].token_ids]
-
-        #     # TODO: proper assertion
-        #     #assert stage2_output.shape[1] - prompt_ids.shape[1] == 7, f"output new tokens={stage2_output.shape[1]-prompt_ids.shape[1]}"
-        #     # prompt_ids = stage2_output
-        #     if batch_size > 1:
-        #         for i, output in enumerate(stage2_output):
-        #             prompt_ids[i]['prompt_token_ids'].extend([val for val in output.outputs[0].token_ids])
-        #     else:
-        #         prompt_ids['prompt_token_ids'].extend([val for val in stage2_output[0].outputs[0].token_ids])
-        # # TODO: this
-        # # Return output based on batch size
-
-        # if batch_size > 1:
-        #     output = np.concatenate([val['prompt_token_ids'][len_prompt:] for val in prompt_ids])
-        #     # output = prompt_ids.cpu().numpy()[:, len_prompt:]
-        #     # output_list = [output[i] for i in range(batch_size)]
-        #     # output = np.concatenate(output_list, axis=0)
-        # else:
-        #     # output = prompt_ids[0].cpu().numpy()[len_prompt:]
-        #     output = np.array(prompt_ids['prompt_token_ids'][len_prompt:])
 
     def stage2_inference(self, stage1_output_set, stage2_output_dir, batch_size=4):
         timer = self.timer

@@ -24,7 +24,6 @@ from models.soundstream_hubert_new import SoundStream
 from vocoder import build_codec_model, process_audio
 from post_process_audio import replace_low_freq_with_energy_matched
 
-from optimum.quanto import quantize, qfloat8, freeze
 from vllm import LLM, SamplingParams
 from vllm.inputs.data import TokensPrompt
 
