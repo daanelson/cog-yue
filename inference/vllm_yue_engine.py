@@ -1,6 +1,7 @@
 import os
 #os.environ['HF_HUB_CACHE'] = './models'
 import sys
+sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'xcodec_mini_infer'))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'xcodec_mini_infer', 'descriptaudiocodec'))
 import re
@@ -133,7 +134,8 @@ class VLLMYue:
         stage2_model = "m-a-p/YuE-s2-1B-general"
 
         self.timer.time(f"Loading models")
-        self.mmtokenizer = _MMSentencePieceTokenizer("./mm_tokenizer_v0.2_hf/tokenizer.model")
+        print(os.listdir('./'))
+        self.mmtokenizer = _MMSentencePieceTokenizer("./inference/mm_tokenizer_v0.2_hf/tokenizer.model")
 
         self.stage1_model = LLM(stage1_model, skip_tokenizer_init=True, dtype='bfloat16', gpu_memory_utilization=.4)
         self.stage2_model = LLM(stage2_model, skip_tokenizer_init=True, dtype='bfloat16', gpu_memory_utilization=.4)
@@ -141,8 +143,8 @@ class VLLMYue:
         self.codectool = CodecManipulator("xcodec", 0, 1)
         self.codectool_stage2 = CodecManipulator("xcodec", 0, 8)
 
-        codec_config = "./xcodec_mini_infer/final_ckpt/config.yaml"
-        codec_path = './xcodec_mini_infer/final_ckpt/ckpt_00360000.pth'
+        codec_config = "./inference/xcodec_mini_infer/final_ckpt/config.yaml"
+        codec_path = './inference/xcodec_mini_infer/final_ckpt/ckpt_00360000.pth'
         model_config = OmegaConf.load(codec_config)
         codec_model = eval(model_config.generator.name)(**model_config.generator.config).to(device)
 

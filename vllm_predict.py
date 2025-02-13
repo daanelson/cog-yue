@@ -65,7 +65,6 @@ class Predictor(BasePredictor):
         self.download_weights(
             "models--m-a-p--YuE-s1-7B-anneal-en-cot", "./inference/models"
         )
-        self.download_weights("xcodec_mini_infer", "./inference")
         self.download_weights(
             "models--m-a-p--YuE-s2-1B-general", "./inference/models"
         )
