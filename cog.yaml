@@ -3,7 +3,7 @@ build:
   cuda: "12.1"
   python_version: "3.12"
   python_packages:
-    - torch
+    - torch==2.5.1
     - omegaconf
     - torchaudio
     - einops
@@ -13,12 +13,11 @@ build:
     - tqdm
     - tensorboard
     - descript-audiotools>=0.7.2
-    - descript-audio-codec
+    - descript-audio-codec==1.0.0
     - scipy
     - accelerate>=0.26.0
     - huggingface_hub
-    - vllm
   run:
     - curl -o /usr/local/bin/pget -L "https://github.com/replicate/pget/releases/latest/download/pget_$(uname -s)_$(uname -m)" && chmod +x /usr/local/bin/pget
-    - pip install flash-attn --no-build-isolation
-predict: "predict.py:Predictor"
+    - pip install vllm
+predict: "vllm_predict.py:Predictor"
