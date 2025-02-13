@@ -117,20 +117,6 @@ class Predictor(BasePredictor):
         if not genre_description.strip():
             raise ValueError("Genre description cannot be empty")
 
-        # Create temporary files for genre and lyrics
-        # def create_temp_file(content: str, prefix: str) -> str:
-        #     temp_file = tempfile.NamedTemporaryFile(
-        #         delete=False, mode="w", prefix=prefix, suffix=".txt"
-        #     )
-        #     content = content.strip() + "\n\n"
-        #     content = content.replace("\r\n", "\n").replace("\r", "\n")
-        #     temp_file.write(content)
-        #     temp_file.close()
-        #     return temp_file.name
-
-        # genre_file = create_temp_file(genre_description, "genre_")
-        # lyrics_file = create_temp_file(lyrics, "lyrics_")
-
         # Setup output directory
         output_dir = f"./output/{time.time()}/"
         os.makedirs(output_dir, exist_ok=True)
@@ -143,9 +129,8 @@ class Predictor(BasePredictor):
             else:
                 os.remove(path)
 
-        self.model.main_generate(genre_description, lyrics, max_new_tokens, num_segments, seed)
+        self.model.main_generate(genre_description, lyrics, max_new_tokens, num_segments, seed, output_dir)
 
-        # TODO: this is broken and it's not hard to fix but I haven't fixed it yet.
         # Find output files in vocoder/mix directory and rename to output_N.mp3
         mix_dir = os.path.join(output_dir, "vocoder", "mix")
         output_files = []
@@ -156,7 +141,7 @@ class Predictor(BasePredictor):
                 new_name = (
                     "output.mp3" if len(mp3_files) == 1 else f"output_{idx+1}.mp3"
                 )
-                new_path = os.path.join(mix_dir, new_name)
+                new_path = f"./{new_name}"
                 os.rename(old_path, new_path)
                 output_files.append(Path(new_path))
 

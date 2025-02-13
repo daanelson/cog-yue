@@ -156,7 +156,7 @@ class VLLMYue:
         self.timer.time(f"models loaded")
 
 
-    def main_generate(self, genre_input: str, lyrics_input: str, max_new_tokens: int, run_n_segments: int, seed: int):
+    def main_generate(self, genre_input: str, lyrics_input: str, max_new_tokens: int, run_n_segments: int, seed: int, output_dir: str):
         timer = self.timer
         timer.reset()
         if args.use_audio_prompt and not args.audio_prompt_path:
@@ -169,7 +169,7 @@ class VLLMYue:
         device = "cuda"
 
         # TODO: output
-        stage1_output_dir = os.path.join(args.output_dir, f"stage1")
+        stage1_output_dir = os.path.join(output_dir, f"stage1")
         stage2_output_dir = stage1_output_dir.replace('stage1', 'stage2')
         os.makedirs(stage1_output_dir, exist_ok=True)
         os.makedirs(stage2_output_dir, exist_ok=True)
@@ -368,7 +368,7 @@ class VLLMYue:
             torchaudio.save(str(path), wav, sample_rate=sample_rate, encoding='PCM_S', bits_per_sample=16)
         # reconstruct tracks
         timer.time("Reconstructing audio tracks...")
-        recons_output_dir = os.path.join(args.output_dir, "recons")
+        recons_output_dir = os.path.join(output_dir, "recons")
         recons_mix_dir = os.path.join(recons_output_dir, 'mix')
         os.makedirs(recons_mix_dir, exist_ok=True)
         tracks = []
@@ -407,7 +407,7 @@ class VLLMYue:
 
         # vocoder to upsample audios
         vocal_decoder, inst_decoder = build_codec_model(args.config_path, args.vocal_decoder_path, args.inst_decoder_path)
-        vocoder_output_dir = os.path.join(args.output_dir, 'vocoder')
+        vocoder_output_dir = os.path.join(output_dir, 'vocoder')
         vocoder_stems_dir = os.path.join(vocoder_output_dir, 'stems')
         vocoder_mix_dir = os.path.join(vocoder_output_dir, 'mix')
         os.makedirs(vocoder_mix_dir, exist_ok=True)
@@ -447,7 +447,7 @@ class VLLMYue:
         replace_low_freq_with_energy_matched(
             a_file=recons_mix,     # 16kHz
             b_file=vocoder_mix,     # 48kHz
-            c_file=os.path.join(args.output_dir, os.path.basename(recons_mix)),
+            c_file=os.path.join(output_dir, os.path.basename(recons_mix)),
             cutoff_freq=5500.0
         )
         timer.time("replace low freq")
