@@ -1,5 +1,5 @@
 import os
-#os.environ['HF_HUB_CACHE'] = './models'
+os.environ['HF_HUB_CACHE'] = './models'
 import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'xcodec_mini_infer'))
