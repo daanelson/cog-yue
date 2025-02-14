@@ -5,4 +5,3 @@
 *.mp3
 *.wav
 inference/models
-inference/xcodec_mini_infer
