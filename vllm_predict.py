@@ -56,17 +56,15 @@ class Predictor(BasePredictor):
 
     def setup(self):
         """Load the model into memory to make running multiple predictions efficient"""
-        stage1_model = "m-a-p/YuE-s1-7B-anneal-en-cot"
-        stage2_model = "m-a-p/YuE-s2-1B-general"
         cog_version = importlib.metadata.version("cog")
         timer = Timer()
         print(f"Cog version: {cog_version}\n")
 
         self.download_weights(
-            "models--m-a-p--YuE-s1-7B-anneal-en-cot", "./inference/models"
+            "yue-s1-7b-anneal-en-cot-no-lfs", "./inference/models/yue-s1-7b-anneal-en-cot"
         )
         self.download_weights(
-            "models--m-a-p--YuE-s2-1B-general", "./inference/models"
+            "yue-s2-1b-general-no-lfs", "./inference/models/yue-s2-1b-general"
         )
         timer.time(f"Loading models")
         self.model = VLLMYue()

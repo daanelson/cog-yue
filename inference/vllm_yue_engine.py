@@ -1,5 +1,4 @@
 import os
-os.environ['HF_HUB_CACHE'] = './models'
 import sys
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'xcodec_mini_infer'))
@@ -130,8 +129,8 @@ class EveryEighthTokenProcessor(LogitsProcessor):
 class VLLMYue:
     def __init__(self, device="cuda"):
         self.timer = Timer()
-        stage1_model = "m-a-p/YuE-s1-7B-anneal-en-cot"
-        stage2_model = "m-a-p/YuE-s2-1B-general"
+        stage1_model = "./inference/models/yue-s1-7b-anneal-en-cot"
+        stage2_model = "./inference/models/yue-s2-1b-general"
 
         self.timer.time(f"Loading models")
         print(os.listdir('./'))
